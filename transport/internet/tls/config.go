@@ -3,15 +3,17 @@
 package tls
 
 import (
+	"crypto/hmac"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"strings"
 	"sync"
 	"time"
 
-	"v2ray.com/core/common/net"
-	"v2ray.com/core/common/protocol/tls/cert"
-	"v2ray.com/core/transport/internet"
+	"github.com/v2fly/v2ray-core/v4/common/net"
+	"github.com/v2fly/v2ray-core/v4/common/protocol/tls/cert"
+	"github.com/v2fly/v2ray-core/v4/transport/internet"
 )
 
 var (
@@ -22,11 +24,14 @@ const exp8357 = "experiment:8357"
 
 // ParseCertificate converts a cert.Certificate to Certificate.
 func ParseCertificate(c *cert.Certificate) *Certificate {
-	certPEM, keyPEM := c.ToPEM()
-	return &Certificate{
-		Certificate: certPEM,
-		Key:         keyPEM,
+	if c != nil {
+		certPEM, keyPEM := c.ToPEM()
+		return &Certificate{
+			Certificate: certPEM,
+			Key:         keyPEM,
+		}
 	}
+	return nil
 }
 
 func (c *Config) loadSelfCertPool() (*x509.CertPool, error) {
@@ -114,8 +119,9 @@ func getGetCertificateFunc(c *tls.Config, ca []*Certificate) func(hello *tls.Cli
 
 			access.Lock()
 			for _, certificate := range c.Certificates {
-				if !isCertificateExpired(&certificate) {
-					newCerts = append(newCerts, certificate)
+				cert := certificate
+				if !isCertificateExpired(&cert) {
+					newCerts = append(newCerts, cert)
 				}
 			}
 
@@ -166,6 +172,19 @@ func (c *Config) parseServerName() string {
 	return c.ServerName
 }
 
+func (c *Config) verifyPeerCert(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	if c.PinnedPeerCertificateChainSha256 != nil {
+		hashValue := GenerateCertChainHash(rawCerts)
+		for _, v := range c.PinnedPeerCertificateChainSha256 {
+			if hmac.Equal(hashValue, v) {
+				return nil
+			}
+		}
+		return newError("peer cert is unrecognized: ", base64.StdEncoding.EncodeToString(hashValue))
+	}
+	return nil
+}
+
 // GetTLSConfig converts this Config into tls.Config.
 func (c *Config) GetTLSConfig(opts ...Option) *tls.Config {
 	root, err := c.getCertPool()
@@ -173,15 +192,23 @@ func (c *Config) GetTLSConfig(opts ...Option) *tls.Config {
 		newError("failed to load system root certificate").AtError().Base(err).WriteToLog()
 	}
 
+	if c == nil {
+		return &tls.Config{
+			ClientSessionCache:     globalSessionCache,
+			RootCAs:                root,
+			InsecureSkipVerify:     false,
+			NextProtos:             nil,
+			SessionTicketsDisabled: true,
+		}
+	}
+
 	config := &tls.Config{
 		ClientSessionCache:     globalSessionCache,
 		RootCAs:                root,
 		InsecureSkipVerify:     c.AllowInsecure,
 		NextProtos:             c.NextProtocol,
-		SessionTicketsDisabled: c.DisableSessionResumption,
-	}
-	if c == nil {
-		return config
+		SessionTicketsDisabled: !c.EnableSessionResumption,
+		VerifyPeerCertificate:  c.verifyPeerCert,
 	}
 
 	for _, opt := range opts {

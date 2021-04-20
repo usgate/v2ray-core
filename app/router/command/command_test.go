@@ -10,13 +10,14 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
-	"v2ray.com/core/app/router"
-	. "v2ray.com/core/app/router/command"
-	"v2ray.com/core/app/stats"
-	"v2ray.com/core/common"
-	"v2ray.com/core/common/net"
-	"v2ray.com/core/features/routing"
-	"v2ray.com/core/testing/mocks"
+
+	"github.com/v2fly/v2ray-core/v4/app/router"
+	. "github.com/v2fly/v2ray-core/v4/app/router/command"
+	"github.com/v2fly/v2ray-core/v4/app/stats"
+	"github.com/v2fly/v2ray-core/v4/common"
+	"github.com/v2fly/v2ray-core/v4/common/net"
+	"github.com/v2fly/v2ray-core/v4/features/routing"
+	"github.com/v2fly/v2ray-core/v4/testing/mocks"
 )
 
 func TestServiceSubscribeRoutingStats(t *testing.T) {
@@ -212,7 +213,7 @@ func TestSerivceTestRoute(t *testing.T) {
 	r := new(router.Router)
 	mockCtl := gomock.NewController(t)
 	defer mockCtl.Finish()
-	common.Must(r.Init(&router.Config{
+	common.Must(r.Init(context.TODO(), &router.Config{
 		Rule: []*router.RoutingRule{
 			{
 				InboundTag: []string{"in"},

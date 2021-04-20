@@ -6,16 +6,15 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"hash"
 	"hash/crc32"
 	"io"
 	"io/ioutil"
-	"v2ray.com/core/common/dice"
 
-	"v2ray.com/core/common"
-	"v2ray.com/core/common/buf"
-	"v2ray.com/core/common/net"
-	"v2ray.com/core/common/protocol"
+	"github.com/v2fly/v2ray-core/v4/common"
+	"github.com/v2fly/v2ray-core/v4/common/buf"
+	"github.com/v2fly/v2ray-core/v4/common/dice"
+	"github.com/v2fly/v2ray-core/v4/common/net"
+	"github.com/v2fly/v2ray-core/v4/common/protocol"
 )
 
 const (
@@ -35,7 +34,7 @@ var addrParser = protocol.NewAddressParser(
 func ReadTCPSession(user *protocol.MemoryUser, reader io.Reader) (*protocol.RequestHeader, buf.Reader, error) {
 	account := user.Account.(*MemoryAccount)
 
-	hashkdf := hmac.New(func() hash.Hash { return sha256.New() }, []byte("SSBSKDF"))
+	hashkdf := hmac.New(sha256.New, []byte("SSBSKDF"))
 	hashkdf.Write(account.Key)
 
 	behaviorSeed := crc32.ChecksumIEEE(hashkdf.Sum(nil))
@@ -95,6 +94,12 @@ func ReadTCPSession(user *protocol.MemoryUser, reader io.Reader) (*protocol.Requ
 		return nil, nil, newError("invalid remote address.")
 	}
 
+	if ivError := account.CheckIV(iv); ivError != nil {
+		readSizeRemain -= int(buffer.Len())
+		DrainConnN(reader, readSizeRemain)
+		return nil, nil, newError("failed iv check").Base(ivError)
+	}
+
 	return request, br, nil
 }
 
@@ -112,6 +117,9 @@ func WriteTCPRequest(request *protocol.RequestHeader, writer io.Writer) (buf.Wri
 	if account.Cipher.IVSize() > 0 {
 		iv = make([]byte, account.Cipher.IVSize())
 		common.Must2(rand.Read(iv))
+		if ivError := account.CheckIV(iv); ivError != nil {
+			return nil, newError("failed to mark outgoing iv").Base(ivError)
+		}
 		if err := buf.WriteAllBytes(writer, iv); err != nil {
 			return nil, newError("failed to write IV")
 		}
@@ -146,6 +154,10 @@ func ReadTCPResponse(user *protocol.MemoryUser, reader io.Reader) (buf.Reader, e
 		}
 	}
 
+	if ivError := account.CheckIV(iv); ivError != nil {
+		return nil, newError("failed iv check").Base(ivError)
+	}
+
 	return account.Cipher.NewDecryptionReader(account.Key, iv, reader)
 }
 
@@ -157,6 +169,9 @@ func WriteTCPResponse(request *protocol.RequestHeader, writer io.Writer) (buf.Wr
 	if account.Cipher.IVSize() > 0 {
 		iv = make([]byte, account.Cipher.IVSize())
 		common.Must2(rand.Read(iv))
+		if ivError := account.CheckIV(iv); ivError != nil {
+			return nil, newError("failed to mark outgoing iv").Base(ivError)
+		}
 		if err := buf.WriteAllBytes(writer, iv); err != nil {
 			return nil, newError("failed to write IV.").Base(err)
 		}
